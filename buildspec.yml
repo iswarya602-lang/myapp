@@ -1,0 +1,57 @@
+version: 0.2
+
+phases:
+
+  pre_build:
+    commands:
+      # Verify AWS CLI
+      - aws --version
+
+      # Get AWS Account ID
+      - ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+
+      # Set variables
+      - REGION=eu-north-1
+      - REPOSITORY=myapp
+      - CLUSTER_NAME=Appcluster
+
+      # Install kubectl
+      - curl -O https://s3.us-west-2.amazonaws.com/amazon-eks/1.32.0/2025-06-18/bin/linux/amd64/kubectl
+      - chmod +x kubectl
+      - mv kubectl /usr/local/bin/
+
+      # Verify kubectl installation
+      - kubectl version --client
+
+      # Login to Amazon ECR
+      - aws ecr get-login-password --region $REGION | docker login --username AWS --password-stdin $ACCOUNT_ID.dkr.ecr.$REGION.amazonaws.com
+
+      # Define image URI
+      - IMAGE_URI=$ACCOUNT_ID.dkr.ecr.$REGION.amazonaws.com/$REPOSITORY
+
+  build:
+    commands:
+      # Build Docker image
+      - docker build -t $IMAGE_URI .
+
+      # Push Docker image to ECR
+      - docker push $IMAGE_URI
+
+  post_build:
+    commands:
+      # Configure kubectl for EKS
+      - aws eks update-kubeconfig --region $REGION --name $CLUSTER_NAME
+
+      # Verify EKS connection
+      - kubectl get nodes
+
+      # Replace image placeholder in deployment.yaml
+      - sed -i "s|IMAGE_URI|$IMAGE_URI|g" deployment.yaml
+
+      # Deploy to EKS
+      - kubectl apply -f deployment.yaml --validate=false
+      - kubectl apply -f service.yaml --validate=false
+
+artifacts:
+  files:
+    - '**/*'
